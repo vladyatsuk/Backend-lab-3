@@ -193,7 +193,7 @@ def records_get():
         records = query.all()
     except Exception as e:
         return e, 400
-    return RecordSchema().dump(records)
+    return RecordSchema(many=True).dump(records)
 
 @currency_blueprint.get('/currency')
 def currency_get():
