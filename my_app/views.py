@@ -1,13 +1,21 @@
-from my_app import app
+import uuid
 from flask import request
 from datetime import datetime
-import uuid
+from marshmallow import ValidationError
+from flask import Blueprint
+from sqlalchemy.exc import IntegrityError
 
-users = {}
-categories = {}
-records = {}
+from .db import db
+from .models import UserModel, CategoryModel, CurrencyModel, RecordModel
+from .schemas import UserSchema, CategorySchema, CurrencySchema, RecordSchema
 
-@app.route('/healthcheck')
+healthcheck_blueprint = Blueprint('healthcheck', __name__)
+user_blueprint = Blueprint('user', __name__)
+category_blueprint = Blueprint('category', __name__)
+record_blueprint = Blueprint('record', __name__)
+currency_blueprint = Blueprint('currency', __name__)
+
+@healthcheck_blueprint.route('/healthcheck')
 def healthcheck():
     current_time = datetime.now().isoformat()
     status = 'OK'
@@ -19,135 +27,201 @@ def healthcheck():
 
     return response_data, 200
 
-@app.get('/user/<user_id>')
+@user_blueprint.get('/user/<user_id>')
 def user_get(user_id):
-    if user_id not in users:
+    user = UserModel.query.get(user_id)
+    if not user:
         return {'error': f'No user found with id {user_id}'}, 404
-    else:
-        return users[user_id]
+    try:
+        return UserSchema().dump(user), 200
+    except ValidationError as err:
+        return err.messages, 400
 
-@app.delete('/user/<user_id>')
+@user_blueprint.delete('/user/<user_id>')
 def user_delete(user_id):
-    if user_id not in users:
+    user = UserModel.query.get(user_id)
+    if not user:
         return {'error': f'No user found with id {user_id}'}, 404
-    else:
-        del users[user_id]
-        return {'message': f'User {user_id} deleted successfully'}
+    try:
+        db.session.delete(user)
+        db.session.commit()
+        return {'message': f'User with id {user_id} successfully deleted'}, 200
+        # return UserSchema().dump(user), 200
+    except ValidationError as err:   
+        return err.messages, 400
 
-@app.post('/user')
+@user_blueprint.post('/user')
 def user_add():
-    content_type = request.headers.get('Content-Type')
-    if content_type == 'application/json':
-        name = request.json['name']
-    else:
-        name = request.args.get('name') 
-    if not name:
-        return {'error': 'Name is required'}, 400
-    id = uuid.uuid4().hex
-    user = {'id': id, 'name': name}
-    users[id] = user
-    return user
+    try:
+        data = UserSchema().load(request.json)
+    except ValidationError as err:
+        return err.messages, 400
+    data['id'] = uuid.uuid4().hex
 
-@app.get('/users')
+    if 'default_currency_id' not in data or not data['default_currency_id']:
+        uah_currency = CurrencyModel.query.filter_by(name='UAH').first()
+        data['default_currency_id'] = uah_currency.id if uah_currency else None
+    user = UserModel(**data)
+    try:
+        db.session.add(user)
+        db.session.commit()
+    except Exception as e:
+        return e, 400
+    return UserSchema().dump(user)
+
+@user_blueprint.get('/users')
 def users_get():
-    return list(users.values())
+    all_users = UserModel.query.all()
+    return UserSchema(many=True).dump(all_users)
 
-@app.get('/category')
+@category_blueprint.get('/category')
 def categories_get():
-    return list(categories.values())
+    all_categories = CategoryModel.query.all()
+    return CategorySchema(many=True).dump(all_categories)
 
-@app.post('/category')
+@category_blueprint.post('/category')
 def category_add():
-    content_type = request.headers.get('Content-Type')
-    if content_type == 'application/json':
-        name = request.json['name']
-    else:
-        name = request.args.get('name')
-    id = uuid.uuid4().hex
-    category = {'id': id, 'name': name}
-    categories[id] = category
-    return category
+    try:
+        data = CategorySchema().load(request.json)
+    except ValidationError as err:
+        return err.messages, 400
+    data['id'] = uuid.uuid4().hex
+    category = CategoryModel(**data)
+    try:
+        db.session.add(category)
+        db.session.commit()
+    except Exception as e:
+        return e, 400
+    return CategorySchema().dump(category)
 
-@app.delete('/category')
+@category_blueprint.delete('/category')
 def category_delete():
     category_id = request.args.get('category_id')
     if not category_id:
-        return {'error', 'Category id is required'}, 400
-    if category_id not in categories:
+        return {'error': 'Category id is required'}, 400
+    
+    category = CategoryModel.query.get(category_id)
+    if not category:
         return {'error': f'No category found with id {category_id}'}, 404
-    else:
-        del categories[category_id]
-        return {'message': f'Category {category_id} deleted successfully'}
 
-@app.get('/record/<record_id>')
+    # db.session.delete(category)
+    # db.session.commit()
+    # return {'message': f'Category {category_id} deleted successfully'}
+    try:
+        db.session.delete(category)
+        db.session.commit()
+        return CategorySchema().dump(category), 200
+    except ValidationError as err:   
+        return err.messages, 400
+
+@record_blueprint.get('/record/<record_id>')
 def record_get(record_id):
-    if record_id not in records:
+    record = RecordModel.query.get(record_id)
+    if not record:
         return {'error': f'No record found with id {record_id}'}, 404
-    else:
-        return records[record_id]
+    try:
+        return RecordSchema().dump(record), 200
+    except ValidationError as err:
+        return err.messages, 400
 
-@app.delete('/record/<record_id>')
+@record_blueprint.delete('/record/<record_id>')
 def record_delete(record_id):
-    if record_id not in records:
+    record = RecordModel.query.get(record_id)
+    if not record:
         return {'error': f'No record found with id {record_id}'}, 404
-    else:
-        del records[record_id]
-        return {'message': f'Category {record_id} deleted successfully'}
+    try:
+        db.session.delete(record)
+        db.session.commit()
+        return RecordSchema().dump(record), 200
+    except ValidationError as err:
+        return err.messages
 
-@app.post('/record')
+@record_blueprint.post('/record')
 def record_add():
-    content_type = request.headers.get('Content-Type')
-    if content_type == 'application/json':
-        user_id = request.json['user_id']
-        category_id = request.json['category_id']
-        amount = request.json['amount']
-    else:
-        user_id = request.args.get('user_id')
-        category_id = request.args.get('category_id')
-        amount = request.args.get('amount')
-    if not user_id or not category_id or not amount:
-        return {'error': 'User id, Category id, and Amount are required'}, 400
-    if user_id not in users:
-        return {'error': 'User not found'}, 404
-    if category_id not in categories:
-        return {'error': 'Category not found'}, 404 
-    record_id = uuid.uuid4().hex
-    timestamp = datetime.now().isoformat()
-    record = {
-        'id': record_id,
-        'user_id': user_id,
-        'category_id': category_id,
-        'timestamp': timestamp,
-        'amount': amount
-    }
-    records[record_id] = record
-    return record
+    try:
+        data = RecordSchema().load(request.json)
+    except ValidationError as err:
+        return err.messages, 400
+    # data = RecordSchema().load(request.json)
+    data['id'] = uuid.uuid4().hex
+    data['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-@app.get('/record')
+    user = UserModel.query.get(data['user_id'])
+    category = CategoryModel.query.get(data['category_id'])
+
+    if user and category:
+        data['user_id'] = user.id
+        if user.default_currency_id:
+            data['currency_id'] = user.default_currency_id
+        else:
+            default_currency = CurrencyModel.query.filter_by(name='UAH').first()
+            data['currency_id'] = default_currency.id if default_currency else None
+        data['category_id'] = category.id
+        record = RecordModel(**data)
+    else:
+        return {'error': 'Invalid data'}, 400
+    try:
+        db.session.add(record)
+        db.session.commit()
+        return RecordSchema().dump(record), 200
+    except Exception as e:
+        return e, 400
+
+@record_blueprint.get('/record')
 def records_get():
     user_id = request.args.get('user_id')
     category_id = request.args.get('category_id')
-    if user_id and user_id not in users:
-        return {'error': 'User not found'}, 404
-    if category_id and category_id not in categories:
-        return {'error': 'Category not found'}, 404
-    if user_id and category_id:
-        user_category_records = [
-                record for record in records.values() if
-                record['user_id'] == user_id and 
-                record['category_id'] == category_id
-            ]
-        return user_category_records
-    elif user_id:
-        user_records = [
-            record for record in records.values() if record['user_id'] == user_id
-        ]
-        return user_records
-    elif category_id:
-        category_records = [
-            record for record in records.values() if
-            record['category_id'] == category_id
-        ]
-        return category_records
-    else:
+
+    if not user_id and not category_id:
         return {'error': 'At least one of User id or Category id is required'}, 400
+    
+    user = UserModel.query.get(user_id)
+    category = CategoryModel.query.get(category_id)
+
+    if user_id and not user:
+        return {'error': 'User not found'}, 404
+    if category_id and not category:
+        return {'error': 'Category not found'}, 404
+    
+    query = RecordModel.query
+    if user_id:
+        query = query.filter_by(user_id=user_id)
+    if category_id:
+        query = query.filter_by(category_id=category_id)
+
+    try:
+        records = query.all()
+    except Exception as e:
+        return e, 400
+    return RecordSchema().dump(records)
+
+@currency_blueprint.get('/currency')
+def currency_get():
+    all_currencies = CurrencyModel.query.all()
+    return CurrencySchema(many=True).dump(all_currencies)
+
+@currency_blueprint.post('/currency')
+def currency_add():
+    try:
+        data = CurrencySchema().load(request.json)
+    except ValidationError as err:
+        return err.messages
+    data['id'] = uuid.uuid4().hex
+    currency = CurrencyModel(**data)
+    try:
+        db.session.add(currency)
+        db.session.commit()
+        return CurrencySchema().dump(currency), 200
+    except IntegrityError:
+        return {'error': 'This currency already exists'}, 400
+    
+@currency_blueprint.delete('/currency/<currency_id>')
+def currency_delete(currency_id):
+    currency = CurrencyModel.query.get(currency_id)
+    try:
+        db.session.delete(currency)
+        db.session.commit()
+        return CurrencySchema().dump(currency), 200
+    except ValidationError as err:
+        return err.messages
+
